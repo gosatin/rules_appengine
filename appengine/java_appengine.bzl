@@ -285,7 +285,7 @@ def java_appengine_repositories(version=JAVA_SDK_VERSION,
   jvm_maven_import_external(
       name = "javax_servlet_api",
       artifact = "javax.servlet:servlet-api:2.5",
-      artifact_sha256 = "5959582d97d8b61f4d154ca9e495aafd16726e34",
+      artifact_sha256 = "c658ea360a70faeeadb66fb3c90a702e4142a0ab7768f9ae9828678e0d9ad4dc",
       server_urls = ["https://repo1.maven.org/maven2/"],
       licenses = ["notice"],  # Apache 2.0
   )
