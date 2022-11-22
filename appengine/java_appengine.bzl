@@ -95,15 +95,25 @@ def _make_war(zipper, input_dir, output):
       ("${root}/%s Cc ${root}/%s @${root}/file_list)" % (zipper.path, output.path))
       ]
 
+def _terminating(cond):
+    """An easy way to break out of a generator"""
+    if cond:
+        return True
+
+
 def _common_substring(str1, str2):
-  i = 0
-  res = ""
-  for c in str1:
-    if str2[i] != c:
-      return res
-    res += c
-    i += 1
-  return res
+    answer = ""
+    len1, len2 = len(str1), len(str2)
+    for i in range(len1):
+        match = ""
+        for j in range(len2):
+            if (i + j < len1 and str1[i + j] == str2[j]):
+                match += str2[j]
+            else:
+                if (len(match) > len(answer)): answer = match
+                match = ""
+    return answer
+
 
 def _short_path_dirname(path):
   sp = path.short_path
@@ -134,12 +144,14 @@ def _war_impl(ctxt):
   inputs = [zipper]
   cmd += ["mkdir -p %s/WEB-INF/lib" % build_output]
 
-  transitive_deps = depset()
+
+  transitive_deps = []
   for jar in ctxt.attr.jars:
     if hasattr(jar, "java"):  # java_library, java_import
       transitive_deps += jar.java.transitive_runtime_deps
     elif hasattr(jar, "files"):  # a jar file
-      transitive_deps += jar.files
+      transitive_deps += jar.files.to_list()
+
 
   for dep in transitive_deps:
     cmd += _add_file(dep, build_output + "/WEB-INF/lib")
@@ -156,7 +168,7 @@ def _war_impl(ctxt):
 
   cmd += _make_war(zipper, build_output, war)
 
-  ctxt.action(
+  ctxt.actions.run_shell(
       inputs = inputs,
       outputs = [war],
       mnemonic="WAR",
@@ -213,15 +225,19 @@ appengine_war_base = rule(
     attrs = {
         "_java": attr.label(
             default = Label("@bazel_tools//tools/jdk:java"),
+	        allow_single_file = True,
         ),
         "_zipper": attr.label(
             default = Label("@bazel_tools//tools/zip:zipper"),
+	    allow_single_file = True,
         ),
         "_runner_template": attr.label(
             default = Label("//appengine/java:runner_template"),
+	        allow_single_file = True,
         ),
         "_deploy_template": attr.label(
             default = Label("//appengine/java:deploy_template"),
+	        allow_single_file = True,
         ),
         "_appengine_sdk": attr.label(
             default = Label("@com_google_appengine_java//:sdk"),
