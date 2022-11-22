@@ -28,8 +28,6 @@ appengine_war(
   # relative to current package or, relative to the workspace root if starting
   # with a leading slash.
   data_path = "/java/com/google/examples/mywebapp",
-  # Optional JVM arguments, such as -Dsome_varaible=somevalue.
-  local_jvm_flags = ["-Dparam1=value1", "-Dparam2=value2"],
 )
 
 To test locally:
@@ -71,178 +69,158 @@ APP_ID. If not specified, it uses the default APP_ID provided in the application
 web.xml.
 """
 
-load("@bazel_skylib//lib:versions.bzl", "versions")
-load("@bazel_tools//tools/build_defs/repo:jvm.bzl", "jvm_maven_import_external")
-load(":variables.bzl", "JAVA_SDK_SHA256", "JAVA_SDK_VERSION")
+load(":variables.bzl", "JAVA_SDK_VERSION", "JAVA_SDK_SHA256")
 load(":sdk.bzl", "find_locally_or_download")
+load("@bazel_tools//tools/build_defs/repo:jvm.bzl", "jvm_maven_import_external")
+
+
+jar_filetype = [".jar"]
 
 def _add_file(in_file, output, path = None):
-    output_path = output
-    input_path = in_file.path
-
-    if path and in_file.short_path.startswith(path):
-        output_path += in_file.short_path[len(path):]
-
-    if in_file.basename.endswith(".jar") and in_file.owner.package:
-        filename = "%s/%s" % (in_file.owner.package, in_file.basename)
-        filename = filename.replace("/", "_").replace("=", "_")
-        output_path = "%s/%s" % (output_path, filename)
-
-    return [
-        "mkdir -p $(dirname %s)" % output_path,
-        "test -L %s || ln -s $(pwd)/%s %s" % (output_path, input_path, output_path),
-    ]
+  output_path = output
+  input_path = in_file.path
+  if path and in_file.short_path.startswith(path):
+    output_path += in_file.short_path[len(path):]
+  return [
+      "mkdir -p $(dirname %s)" % output_path,
+      "test -L %s || ln -s $(pwd)/%s %s" % (output_path, input_path, output_path)
+      ]
 
 def _make_war(zipper, input_dir, output):
-    return [
-        "(root=$(pwd);" +
-        ("cd %s &&" % input_dir) +
-        ("find . ! -type d > $root/file_list &&") +
-        ("${root}/%s Cc ${root}/%s @${root}/file_list)" % (zipper.path, output.path)),
-    ]
+  return [
+      "(root=$(pwd);" +
+      ("cd %s &&" % input_dir) +
+      ("find . ! -type d > $root/file_list &&") +
+      ("${root}/%s Cc ${root}/%s @${root}/file_list)" % (zipper.path, output.path))
+      ]
 
 def _common_substring(str1, str2):
-    i = 0
-    res = ""
-    for c in str1.elems():
-        if str2[i] != c:
-            return res
-        res += c
-        i += 1
-    return res
+  i = 0
+  res = ""
+  for c in str1:
+    if str2[i] != c:
+      return res
+    res += c
+    i += 1
+  return res
 
 def _short_path_dirname(path):
-    sp = path.short_path
-    return sp[0:len(sp) - len(path.basename) - 1]
-
-def _collect_transitive_runtime_deps_for(deps):
-    transitive_runtime_deps = []
-    for dep in deps:
-        if JavaInfo in dep:
-            transitive_runtime_deps += [dep[JavaInfo].transitive_runtime_deps]
-        elif hasattr(dep, "files"):  # a jar file
-            transitive_runtime_deps += [dep.files]
-
-    return depset(transitive = transitive_runtime_deps)
+  sp = path.short_path
+  return sp[0:len(sp)-len(path.basename)-1]
 
 def _war_impl(ctxt):
-    """Implementation of the rule that creates
-       - the war
-       - the script to deploy
-    """
-    zipper = ctxt.file._zipper
+  """Implementation of the rule that creates
+     - the war
+     - the script to deploy
+  """
+  zipper = ctxt.file._zipper
 
-    data_path = ctxt.attr.data_path
-    if not data_path:
-        data_path = _short_path_dirname(ctxt.outputs.war)
-    elif data_path[0] == "/":
-        data_path = data_path[1:]
-    else:  # relative path
-        data_path = _short_path_dirname(ctxt.outputs.war) + "/" + data_path
+  data_path = ctxt.attr.data_path
+  if not data_path:
+    data_path = _short_path_dirname(ctxt.outputs.war)
+  elif data_path[0] == "/":
+    data_path = data_path[1:]
+  else:  # relative path
+    data_path = _short_path_dirname(ctxt.outputs.war) + "/" + data_path
 
-    war = ctxt.outputs.war
-    build_output = war.path + ".build_output"
-    cmd = [
-        "set -e;rm -rf " + build_output,
-        "mkdir -p " + build_output,
-    ]
+  war = ctxt.outputs.war
+  build_output = war.path + ".build_output"
+  cmd = [
+      "set -e;rm -rf " + build_output,
+      "mkdir -p " + build_output
+      ]
 
-    inputs = [zipper]
-    cmd += ["mkdir -p %s/WEB-INF/lib" % build_output]
+  inputs = [zipper]
+  cmd += ["mkdir -p %s/WEB-INF/lib" % build_output]
 
-    transitive_deps = _collect_transitive_runtime_deps_for(ctxt.attr.jars)
+  transitive_deps = depset()
+  for jar in ctxt.attr.jars:
+    if hasattr(jar, "java"):  # java_library, java_import
+      transitive_deps += jar.java.transitive_runtime_deps
+    elif hasattr(jar, "files"):  # a jar file
+      transitive_deps += jar.files
 
-    for dep in transitive_deps.to_list():
-        cmd += _add_file(dep, build_output + "/WEB-INF/lib")
-        inputs.append(dep)
+  for dep in transitive_deps:
+    cmd += _add_file(dep, build_output + "/WEB-INF/lib")
+    inputs.append(dep)
 
-    for jar in ctxt.files._appengine_deps:
-        cmd += _add_file(jar, build_output + "/WEB-INF/lib")
-        inputs.append(jar)
+  for jar in ctxt.files._appengine_deps:
+    cmd += _add_file(jar, build_output + "/WEB-INF/lib")
+    inputs.append(jar)
 
-    inputs += ctxt.files.data
-    for res in ctxt.files.data:
-        # Add the data file
-        cmd += _add_file(res, build_output, path = data_path)
+  inputs += ctxt.files.data
+  for res in ctxt.files.data:
+    # Add the data file
+    cmd += _add_file(res, build_output, path = data_path)
 
-    cmd += _make_war(zipper, build_output, war)
+  cmd += _make_war(zipper, build_output, war)
 
-    ctxt.actions.run_shell(
-        inputs = inputs,
-        outputs = [war],
-        mnemonic = "WAR",
-        command = "\n".join(cmd),
-        use_default_shell_env = True,
-    )
+  ctxt.action(
+      inputs = inputs,
+      outputs = [war],
+      mnemonic="WAR",
+      command="\n".join(cmd),
+      use_default_shell_env=True)
 
-    executable = ctxt.outputs.executable
-    appengine_sdk = None
-    for f in ctxt.files._appengine_sdk:
-        if not appengine_sdk:
-            appengine_sdk = f.short_path
-        elif not f.path.startswith(appengine_sdk):
-            appengine_sdk = _common_substring(appengine_sdk, f.short_path)
+  executable = ctxt.outputs.executable
+  appengine_sdk = None
+  for f in ctxt.files._appengine_sdk:
     if not appengine_sdk:
-        fail(
-            "could not find appengine files",
-            attr = str(ctxt.attr._appengine_sdk.label),
-        )
+      appengine_sdk = f.short_path
+    elif not f.path.startswith(appengine_sdk):
+      appengine_sdk = _common_substring(appengine_sdk, f.short_path)
+  if not appengine_sdk:
+    fail("could not find appengine files",
+         attr = str(ctxt.attr._appengine_sdk.label))
 
-    classpath = ["${JAVA_RUNFILES}/%s" % jar.short_path for jar in transitive_deps.to_list()]
-    classpath += [
-        "${JAVA_RUNFILES}/%s" % jar.short_path
-        for jar in ctxt.files._appengine_deps
-    ]
+  classpath = ["${JAVA_RUNFILES}/%s" % jar.short_path for jar in transitive_deps]
+  classpath += [
+      "${JAVA_RUNFILES}/%s" % jar.short_path
+      for jar in ctxt.files._appengine_deps
+  ]
 
-    substitutions = {
-        "%{workspace_name}": ctxt.workspace_name,
-        "%{zipper}": ctxt.file._zipper.short_path,
-        "%{war}": ctxt.outputs.war.short_path,
-        "%{java}": ctxt.file._java.short_path,
-        "%{appengine_sdk}": appengine_sdk,
-        "%{classpath}": (":".join(classpath)),
-        "%{data_path}": data_path,
-        "%{local_jvm_flags}": (" ".join(ctxt.attr.local_jvm_flags)),
-    }
+  substitutions = {
+      "%{workspace_name}" : ctxt.workspace_name,
+      "%{zipper}": ctxt.file._zipper.short_path,
+      "%{war}": ctxt.outputs.war.short_path,
+      "%{java}": ctxt.file._java.short_path,
+      "%{appengine_sdk}": appengine_sdk,
+      "%{classpath}":  (":".join(classpath)),
+      "%{data_path}": data_path
+  }
 
-    ctxt.actions.expand_template(
-        output = executable,
-        template = ctxt.file._runner_template,
-        substitutions = substitutions,
-        is_executable = True,
-    )
-    ctxt.actions.expand_template(
-        output = ctxt.outputs.deploy_sh,
-        template = ctxt.file._deploy_template,
-        substitutions = substitutions,
-        is_executable = True,
-    )
+  ctxt.actions.expand_template(
+      output = executable,
+      template = ctxt.file._runner_template,
+      substitutions = substitutions,
+      is_executable = True)
+  ctxt.actions.expand_template(
+      output = ctxt.outputs.deploy_sh,
+      template = ctxt.file._deploy_template,
+      substitutions = substitutions,
+      is_executable = True)
 
-    runfiles = ctxt.runfiles(files = [war, executable] +
-                                     transitive_deps.to_list() +
-                                     inputs +
-                                     ctxt.files._appengine_sdk +
-                                     [ctxt.file._java, ctxt.file._zipper])
-    return struct(runfiles = runfiles)
+  runfiles = ctxt.runfiles(files = [war, executable]
+                           + list(transitive_deps)
+                           + inputs
+                           + ctxt.files._appengine_sdk
+                           + [ctxt.file._java, ctxt.file._zipper])
+  return struct(runfiles = runfiles)
 
 appengine_war_base = rule(
     _war_impl,
     attrs = {
         "_java": attr.label(
             default = Label("@bazel_tools//tools/jdk:java"),
-            allow_single_file = True,
         ),
         "_zipper": attr.label(
             default = Label("@bazel_tools//tools/zip:zipper"),
-            allow_single_file = True,
         ),
         "_runner_template": attr.label(
             default = Label("//appengine/java:runner_template"),
-            allow_single_file = True,
         ),
         "_deploy_template": attr.label(
             default = Label("//appengine/java:deploy_template"),
-            allow_single_file = True,
         ),
         "_appengine_sdk": attr.label(
             default = Label("@com_google_appengine_java//:sdk"),
@@ -251,12 +229,11 @@ appengine_war_base = rule(
             default = [Label("@com_google_appengine_java//:api")],
         ),
         "jars": attr.label_list(
-            allow_files = [".jar"],
+            allow_files = jar_filetype,
             mandatory = True,
         ),
         "data": attr.label_list(allow_files = True),
         "data_path": attr.string(),
-        "local_jvm_flags": attr.string_list(),
     },
     executable = True,
     outputs = {
@@ -265,104 +242,50 @@ appengine_war_base = rule(
     },
 )
 
-def java_war(name, data = [], data_path = None, local_jvm_flags = [], **kwargs):
-    """Convenience macro to call appengine_war with Java sources rather than jar.
-    """
-    native.java_library(name = "lib%s" % name, **kwargs)
-    appengine_war(
-        name = name,
-        jars = ["lib%s" % name],
-        data = data,
-        data_path = data_path,
-        local_jvm_flags = local_jvm_flags,
-    )
+def java_war(name, data=[], data_path=None, **kwargs):
+  """Convenience macro to call appengine_war with Java sources rather than jar.
+  """
+  native.java_library(name = "lib%s" % name, **kwargs)
+  appengine_war(name = name,
+                jars = ["lib%s" % name],
+                data=data,
+                data_path=data_path)
 
-def appengine_war(name, jars, data, data_path, local_jvm_flags = [], testonly = 0):
-    """Convenience macro that builds the war and offers an executable
-       target to deploy on Google app engine.
-    """
-    appengine_war_base(
-        name = name,
-        jars = jars,
-        data = data,
-        data_path = data_path,
-        local_jvm_flags = local_jvm_flags,
-        testonly = testonly,
-    )
+def appengine_war(name, jars, data, data_path, testonly = 0):
+  """Convenience macro that builds the war and offers an executable
+     target to deploy on Google app engine.
+  """
+  appengine_war_base(
+      name = name,
+      jars = jars,
+      data = data,
+      data_path = data_path,
+      testonly = testonly,
+  )
+  # Create the executable rule to deploy
+  native.sh_binary(
+      name = "%s.deploy" % name,
+      srcs = ["%s_deploy.sh" % name],
+      data = [name],
+      testonly = testonly,
+  )
 
-    # Create the executable rule to deploy
-    native.sh_binary(
-        name = "%s.deploy" % name,
-        srcs = ["%s_deploy.sh" % name],
-        data = [name],
-        testonly = testonly,
-    )
+def java_appengine_repositories(version=JAVA_SDK_VERSION,
+                                sha256=JAVA_SDK_SHA256):
+  find_locally_or_download(
+      name = "com_google_appengine_java",
+      lang = "java",
+      sha256 = sha256,
+      version = version,
+      filename_pattern = "appengine-java-sdk-{version}.zip",
+      strip_prefix_pattern = "appengine-java-sdk-{version}",
+  )
 
-def java_appengine_repositories(
-        version = JAVA_SDK_VERSION,
-        sha256 = JAVA_SDK_SHA256):
-    find_locally_or_download(
-        name = "com_google_appengine_java",
-        lang = "java",
-        sha256 = sha256,
-        version = version,
-        filename_pattern = "appengine-java-sdk-{version}.zip",
-        strip_prefix_pattern = "appengine-java-sdk-{version}",
-    )
+  jvm_maven_import_external(
+      name = "javax_servlet_api",
+      artifact = "javax.servlet:servlet-api:2.5",
+      #artifact_sha256 = "59721f0805e223d84b90677887d9ff567dc534d7c502ca903c0c2b17f05c116a",
+      server_urls = ["http://central.maven.org/maven2"],
+      licenses = ["notice"],  # Apache 2.0
+  )
 
-    jvm_maven_import_external(
-        name = "javax_servlet_api",
-        artifact = "javax.servlet:javax.servlet-api:3.1.0",
-        artifact_sha256 = "af456b2dd41c4e82cf54f3e743bc678973d9fe35bd4d3071fa05c7e5333b8482",
-        server_urls = ["https://repo1.maven.org/maven2/"],
-        licenses = ["reciprocal"],  # CDDL License
-    )
-
-    if not versions.get() or versions.is_at_least("5.0.0", versions.get()): # development or version >= 5.0.0
-        build_file_content = """
-load(
-    "@bazel_tools//tools/jdk:default_java_toolchain.bzl",
-    "default_java_toolchain",
-    "JVM8_TOOLCHAIN_CONFIGURATION",
-    "JDK8_JVM_OPTS"
-)
-
-default_java_toolchain(
-    name = "jdk8",
-    configuration = JVM8_TOOLCHAIN_CONFIGURATION,
-    jvm_opts = JDK8_JVM_OPTS + [
-        "-XX:+TieredCompilation",
-        "-XX:TieredStopAtLevel=1",
-    ],
-    source_version = "8",
-    target_version = "8",
-    visibility = ["//visibility:public"],
-)
-"""
-        # Bazel < 5.0.0
-
-    else:
-        build_file_content = """
-load(
-    "@bazel_tools//tools/jdk:default_java_toolchain.bzl",
-    "default_java_toolchain",
-    "JDK8_JVM_OPTS",
-)
-
-default_java_toolchain(
-    name = "jdk8",
-    tools = ["@bazel_tools//tools/jdk:javac_jar"],
-    jvm_opts = JDK8_JVM_OPTS + [
-        "-XX:+TieredCompilation",
-        "-XX:TieredStopAtLevel=1",
-    ],
-    source_version = "8",
-    target_version = "8",
-    visibility = ["//visibility:public"],
-)
-          """
-    native.new_local_repository(
-        name = "rules_appengine_toolchain",
-        path = ".",
-        build_file_content = build_file_content,
-    )
