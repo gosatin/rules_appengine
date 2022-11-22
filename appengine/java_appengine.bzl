@@ -69,6 +69,7 @@ APP_ID. If not specified, it uses the default APP_ID provided in the application
 web.xml.
 """
 
+
 load(":variables.bzl", "JAVA_SDK_VERSION", "JAVA_SDK_SHA256")
 load(":sdk.bzl", "find_locally_or_download")
 load("@bazel_tools//tools/build_defs/repo:jvm.bzl", "jvm_maven_import_external")
@@ -285,7 +286,7 @@ def java_appengine_repositories(version=JAVA_SDK_VERSION,
       name = "javax_servlet_api",
       artifact = "javax.servlet:servlet-api:2.5",
       artifact_sha256 = "5959582d97d8b61f4d154ca9e495aafd16726e34",
-      server_urls = ["http://central.maven.org/maven2"],
+      server_urls = ["https://repo1.maven.org/maven2/"],
       licenses = ["notice"],  # Apache 2.0
   )
 
